@@ -2,7 +2,7 @@ use bincode::serialize;
 use std::{collections::HashMap, net::SocketAddr, time::Duration};
 use tokio::{net::UdpSocket, task, time::sleep};
 
-use crate::data::{MessagesFromServer, ServerMessage};
+use crate::data::{MessagesFromServer, PeerType, ServerMessage};
 
 mod data;
 
@@ -60,6 +60,32 @@ pub async fn serve(listener: SocketAddr) {
                 }
                 ServerMessage::Ping { name } => serialize(&MessagesFromServer::Pong { name })
                     .expect("Failed to serialize message"),
+                ServerMessage::ConnectionRequest {
+                    from,
+                    to,
+                    peer_type,
+                } => match waiting.get(&to) {
+                    Some(peer_address) => {
+                        let peer_address: SocketAddr =
+                            peer_address.parse().expect("Peer address invalid");
+
+                        let request = serialize(&MessagesFromServer::ConnectionRequest {
+                            name: from.clone(),
+                            address: peer_address.to_string(),
+                            peer_type,
+                        })
+                        .expect("Failed to serialize message");
+                        socket
+                            .send_to(&request, &peer_address)
+                            .await
+                            .expect("Failed to send UDP packet");
+
+                        serialize(&MessagesFromServer::Confirm { name: from.clone() })
+                            .expect("Failed to serialize message")
+                    }
+                    None => serialize(&MessagesFromServer::Reject { name: from })
+                        .expect("Failed to serialize message"),
+                },
             };
 
             let message = String::from_utf8_lossy(&buffer[..n]);

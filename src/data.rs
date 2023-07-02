@@ -2,8 +2,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
-    Register { name: String, address: String },
-    Ping { name: String },
+    Register {
+        name: String,
+        address: String,
+    },
+    Ping {
+        name: String,
+    },
+    ConnectionRequest {
+        from: String,
+        to: String,
+        peer_type: PeerType,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessagesFromServer {
@@ -17,6 +27,12 @@ pub enum MessagesFromServer {
         name: String,
         address: String,
         peer_type: PeerType,
+    },
+    Confirm {
+        name: String,
+    },
+    Reject {
+        name: String,
     },
 }
 
