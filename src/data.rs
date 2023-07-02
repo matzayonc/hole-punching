@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 pub enum ServerMessage {
     Register {
         name: String,
-        address: String,
     },
     Ping {
         name: String,

@@ -14,7 +14,6 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
 
         let message = serialize(&ServerMessage::Register {
             name: "Alice".to_string(),
-            address: client.ip().to_string(),
         })
         .expect("Failed to serialize message");
 
@@ -23,6 +22,8 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
             Err(e) => println!("Failed to send UDP packet: {}", e),
         };
         println!("Listening for UDP packets on {}", client);
+
+        connect(&socket, server).await.expect("Connect failed");
 
         let mut buffer = [0u8; 1024];
         loop {
@@ -34,6 +35,21 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
     });
 
     receive_task.await.unwrap();
+}
+
+pub async fn connect(socket: &UdpSocket, server: SocketAddr) -> Result<SocketAddr, ()> {
+    let message = serialize(&ServerMessage::ConnectionRequest {
+        from: "Bob".to_string(),
+        to: "Alice".to_string(),
+        peer_type: PeerType::Full,
+    });
+
+    match socket.send_to(&message.unwrap(), &server).await {
+        Ok(n) => println!("Sent {} bytes to {}", n, server),
+        Err(e) => eprintln!("Failed to send UDP packet: {}", e),
+    };
+
+    Ok(server)
 }
 
 pub async fn serve(listener: SocketAddr) {
@@ -53,7 +69,8 @@ pub async fn serve(listener: SocketAddr) {
                 .expect("Failed to deserialize message");
 
             let response = match message {
-                ServerMessage::Register { name, address } => {
+                ServerMessage::Register { name } => {
+                    let address = peer_address.to_string();
                     waiting.insert(name.clone(), address);
                     serialize(&MessagesFromServer::RegisterConfirmation { name })
                         .expect("Failed to serialize message")
