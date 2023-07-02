@@ -1,8 +1,8 @@
 use bincode::serialize;
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, time::Duration};
 use tokio::{net::UdpSocket, task, time::sleep};
 
-use crate::data::ServerMessage;
+use crate::data::{MessagesFromServer, ServerMessage};
 
 mod data;
 
@@ -38,25 +38,32 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
 
 pub async fn serve(listener: SocketAddr) {
     let receive_task = task::spawn(async move {
-        let socket = match UdpSocket::bind(&listener).await {
-            Ok(s) => s,
-            Err(e) => {
-                println!("Failed to bind UDP socket to {}: {}", listener, e);
-                return;
-            }
-        };
+        let socket = UdpSocket::bind(&listener)
+            .await
+            .expect("Failed to bind UDP socket");
 
         println!("Listening for UDP packets on {}", listener);
+        let mut waiting = HashMap::new();
 
         let mut buffer = [0u8; 1024];
         loop {
             let (n, peer_address) = socket.recv_from(&mut buffer).await.unwrap();
 
-            let received_data = &buffer[..n];
-            let message = String::from_utf8_lossy(received_data);
+            let message = bincode::deserialize::<ServerMessage>(&buffer[..n])
+                .expect("Failed to deserialize message");
+
+            let response = match message {
+                ServerMessage::Register { name, address } => {
+                    waiting.insert(name.clone(), address);
+                    serialize(&MessagesFromServer::RegisterConfirmation { name })
+                        .expect("Failed to serialize message")
+                }
+                ServerMessage::Ping { name } => serialize(&MessagesFromServer::Pong { name })
+                    .expect("Failed to serialize message"),
+            };
+
+            let message = String::from_utf8_lossy(&buffer[..n]);
             println!("Received UDP packet from {}: {}", peer_address, message);
-            let response = format!("Hello, UDP packet {}", 42).into_bytes();
-            // let sender_socket = UdpSocket::bind(&sender).await.unwrap();
             socket.send_to(&response, &peer_address).await.unwrap();
             sleep(Duration::from_millis(500)).await;
         }

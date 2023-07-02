@@ -28,7 +28,7 @@ async fn main() -> Result<(), Error> {
 
     // As a server wait for a peer to connect
     #[cfg(feature = "server")]
-    serve(server_address, client_address).await;
+    serve(server_address).await;
 
     Ok(())
 }

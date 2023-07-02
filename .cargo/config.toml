@@ -1,3 +1,3 @@
 [alias]
-serve = "run --features server"
-peer = "run --features peer"
+serve = "run --features  server --no-default-features"
+peer = "run --features peer --no-default-features"
