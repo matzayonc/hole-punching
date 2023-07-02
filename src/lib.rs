@@ -1,17 +1,23 @@
+use bincode::serialize;
 use std::{net::SocketAddr, time::Duration};
 use tokio::{net::UdpSocket, task, time::sleep};
 
+use crate::data::ServerMessage;
+
+mod data;
+
 pub async fn demo(client: SocketAddr, server: SocketAddr) {
     let receive_task: task::JoinHandle<()> = task::spawn(async move {
-        let socket = match UdpSocket::bind(&client).await {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to bind UDP socket to {}: {}", client, e);
-                return;
-            }
-        };
+        let socket = UdpSocket::bind(&client)
+            .await
+            .expect("Failed to bind UDP socket");
 
-        let message = format!("Hello, UDP packet {}", 1).into_bytes();
+        let message = serialize(&ServerMessage::Register {
+            name: "Alice".to_string(),
+            address: client.ip().to_string(),
+        })
+        .expect("Failed to serialize message");
+
         match socket.send_to(&message, &server).await {
             Ok(n) => println!("Sent {} bytes to {}", n, server),
             Err(e) => println!("Failed to send UDP packet: {}", e),
@@ -30,7 +36,7 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
     receive_task.await.unwrap();
 }
 
-pub async fn serve(listener: SocketAddr, sender: SocketAddr) {
+pub async fn serve(listener: SocketAddr) {
     let receive_task = task::spawn(async move {
         let socket = match UdpSocket::bind(&listener).await {
             Ok(s) => s,
