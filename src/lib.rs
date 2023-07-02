@@ -30,17 +30,17 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
     receive_task.await.unwrap();
 }
 
-pub async fn serve(local_address: SocketAddr) {
+pub async fn serve(listener: SocketAddr, sender: SocketAddr) {
     let receive_task = task::spawn(async move {
-        let socket = match UdpSocket::bind(&local_address).await {
+        let socket = match UdpSocket::bind(&listener).await {
             Ok(s) => s,
             Err(e) => {
-                println!("Failed to bind UDP socket to {}: {}", local_address, e);
+                println!("Failed to bind UDP socket to {}: {}", listener, e);
                 return;
             }
         };
 
-        println!("Listening for UDP packets on {}", local_address);
+        println!("Listening for UDP packets on {}", listener);
 
         let mut buffer = [0u8; 1024];
         loop {
@@ -50,7 +50,7 @@ pub async fn serve(local_address: SocketAddr) {
             let message = String::from_utf8_lossy(received_data);
             println!("Received UDP packet from {}: {}", peer_address, message);
             let response = format!("Hello, UDP packet {}", 42).into_bytes();
-            let socket = UdpSocket::bind(&peer_address).await.unwrap();
+            // let sender_socket = UdpSocket::bind(&sender).await.unwrap();
             socket.send_to(&response, &peer_address).await.unwrap();
             sleep(Duration::from_millis(500)).await;
         }

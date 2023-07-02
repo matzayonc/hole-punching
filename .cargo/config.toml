@@ -1,2 +1,3 @@
 [alias]
-server = "build"
+serve = "run --features server"
+peer = "run --features peer"
