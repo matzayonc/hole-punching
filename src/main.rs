@@ -1,10 +1,9 @@
 use dashmap::DashMap;
 use dotenv::dotenv;
-use hole::{PeerConnection, Peers};
+use hole::Peers;
 use log::info;
 use std::env;
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
 use tokio_websockets::Error;
 
 #[cfg(not(any(feature = "peer", feature = "server")))]

@@ -1,18 +1,8 @@
 use bincode::{deserialize, serialize};
 use dashmap::DashMap;
 use log::{debug, info};
-use std::{
-    collections::HashMap,
-    net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
-    time::Duration,
-};
-use tokio::{
-    net::UdpSocket,
-    sync::mpsc::{self, Receiver},
-    task,
-    time::sleep,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use tokio::{net::UdpSocket, sync::mpsc, task};
 
 use crate::peer::connect_peers;
 
@@ -22,10 +12,10 @@ mod peer;
 pub use data::*;
 pub type Peers = Arc<DashMap<String, PeerConnection>>;
 
-fn add_peer_task(peer: Peer, peers: Peers) {
+fn add_peer_task(peer: Peer, peers: Peers, punched: Option<UdpSocket>) {
     let (tx, rx) = mpsc::channel::<()>(32);
 
-    let handle = tokio::spawn(connect_peers(peer.clone(), rx, None));
+    let handle = tokio::spawn(connect_peers(peer.clone(), rx, punched));
     let peer_connection = PeerConnection {
         peer,
         handle,
@@ -74,12 +64,12 @@ pub async fn demo(client: SocketAddr, server: SocketAddr, peers: Peers) {
                         address: address.parse().expect("Peer address invalid"),
                         peer_type,
                     };
-                    add_peer_task(peer, peers.clone());
+                    add_peer_task(peer, peers.clone(), None);
                 }
                 _ => {
                     let received_data = &buffer[..n];
                     let message = String::from_utf8_lossy(received_data);
-                    debug!("Received {} bytes from {}", n, peer_address);
+                    debug!("Received {} bytes from {}: {}", n, peer_address, message);
                 }
             }
         }
@@ -96,10 +86,10 @@ pub async fn connect(socket: UdpSocket, server: SocketAddr, peers: Peers) -> Res
         peer_type: peer_type.clone(),
     });
 
-    match socket.send_to(&message.unwrap(), &server).await {
-        Ok(n) => println!("Sent {} bytes to {}", n, server),
-        Err(e) => eprintln!("Failed to send UDP packet: {}", e),
-    };
+    socket
+        .send_to(&message.unwrap(), &server)
+        .await
+        .expect("Failed to send UDP packet");
 
     let mut buffer: [u8; 1024] = [0u8; 1024];
     loop {
@@ -115,7 +105,7 @@ pub async fn connect(socket: UdpSocket, server: SocketAddr, peers: Peers) -> Res
                     address: peer_address,
                     peer_type: peer_type.clone(),
                 };
-                add_peer_task(peer, peers);
+                add_peer_task(peer, peers, Some(socket));
                 return Ok(());
             }
             _ => {
@@ -176,7 +166,7 @@ pub async fn serve(listener: SocketAddr) {
                         Some(target_address) => {
                             let target_address: SocketAddr = match target_address.parse() {
                                 Ok(address) => address,
-                                Err(e) => {
+                                Err(_) => {
                                     debug!("Peer address for {} invalid: {}", to, target_address);
                                     continue;
                                 }
