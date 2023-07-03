@@ -1,6 +1,7 @@
 use dashmap::DashMap;
 use dotenv::dotenv;
 use hole::{PeerConnection, Peers};
+use log::info;
 use std::env;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
@@ -15,6 +16,7 @@ compile_error!("Features \"peer\" and \"server\" can't be enabled at the same ti
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     dotenv().ok();
+    env_logger::init();
 
     let client_address: SocketAddr = "0.0.0.0:0".parse().expect("Local address invalid"); // Let the OS assign a random available port for the client
     let server_address: SocketAddr = env::var("RENDEZVOUS_SERVER")
@@ -23,6 +25,8 @@ async fn main() -> Result<(), Error> {
         .expect("DNS resolution failed")
         .next()
         .expect("No DNS records found for hostname");
+
+    info!("Starting application with server {}", server_address);
 
     let peers = Peers::new(DashMap::new());
 
