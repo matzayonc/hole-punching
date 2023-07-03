@@ -1,7 +1,9 @@
+use dashmap::DashMap;
 use dotenv::dotenv;
-use hole::{demo, serve};
+use hole::{PeerConnection, Peers};
 use std::env;
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::sync::Arc;
 use tokio_websockets::Error;
 
 #[cfg(not(any(feature = "peer", feature = "server")))]
@@ -22,13 +24,15 @@ async fn main() -> Result<(), Error> {
         .next()
         .expect("No DNS records found for hostname");
 
+    let peers = Peers::new(DashMap::new());
+
     // As a peer contact rendezvous server and wait for a peer to connect
     #[cfg(feature = "peer")]
-    demo(client_address, server_address).await;
+    hole::demo(client_address, server_address, peers).await;
 
     // As a server wait for a peer to connect
     #[cfg(feature = "server")]
-    serve(server_address).await;
+    hole::serve(server_address).await;
 
     Ok(())
 }

@@ -1,12 +1,22 @@
-use bincode::serialize;
-use std::{collections::HashMap, net::SocketAddr, time::Duration};
-use tokio::{net::UdpSocket, task, time::sleep};
+use bincode::{deserialize, serialize};
+use dashmap::DashMap;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::{
+    net::UdpSocket,
+    sync::mpsc::{self, Receiver},
+    task,
+    time::sleep,
+};
 
-use crate::data::{MessagesFromServer, PeerType, ServerMessage};
+use crate::peer::connect_peers;
 
 mod data;
+mod peer;
 
-pub async fn demo(client: SocketAddr, server: SocketAddr) {
+pub use data::*;
+pub type Peers = Arc<DashMap<String, PeerConnection>>;
+
+pub async fn demo(client: SocketAddr, server: SocketAddr, peers: Peers) {
     let receive_task: task::JoinHandle<()> = task::spawn(async move {
         let socket = UdpSocket::bind(&client)
             .await
@@ -23,21 +33,50 @@ pub async fn demo(client: SocketAddr, server: SocketAddr) {
         };
         println!("Listening for UDP packets on {}", client);
 
-        connect(&socket, server).await.expect("Connect failed");
+        let other_socket: UdpSocket = UdpSocket::bind(&client)
+            .await
+            .expect("Failed to bind UDP socket");
+        tokio::spawn(connect(other_socket, server));
 
-        let mut buffer = [0u8; 1024];
+        let mut buffer: [u8; 1024] = [0u8; 1024];
         loop {
             let (n, peer_address) = socket.recv_from(&mut buffer).await.unwrap();
-            let received_data = &buffer[..n];
-            let message = String::from_utf8_lossy(received_data);
-            println!("Received UDP packet from {}: {}", peer_address, message);
+            let message = deserialize::<MessagesFromServer>(&buffer[..n])
+                .expect("Failed to deserialize message");
+
+            match message {
+                MessagesFromServer::ConnectionRequest {
+                    name,
+                    address,
+                    peer_type,
+                } => {
+                    let (tx, rx) = mpsc::channel::<()>(32);
+                    let peer = Peer {
+                        name: name.clone(),
+                        address: address.parse().expect("Peer address invalid"),
+                        peer_type,
+                    };
+                    let handle = tokio::spawn(connect_peers(peer.clone(), rx));
+                    let peer_connection = PeerConnection {
+                        peer,
+                        handle,
+                        sender: tx,
+                    };
+                    peers.insert(name, peer_connection);
+                }
+                _ => {
+                    let received_data = &buffer[..n];
+                    let message = String::from_utf8_lossy(received_data);
+                    println!("Received UDP packet from {}: {}", peer_address, message);
+                }
+            }
         }
     });
 
     receive_task.await.unwrap();
 }
 
-pub async fn connect(socket: &UdpSocket, server: SocketAddr) -> Result<SocketAddr, ()> {
+pub async fn connect(socket: UdpSocket, server: SocketAddr) -> Result<SocketAddr, ()> {
     let message = serialize(&ServerMessage::ConnectionRequest {
         from: "Bob".to_string(),
         to: "Alice".to_string(),
