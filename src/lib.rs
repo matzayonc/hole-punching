@@ -19,7 +19,7 @@ pub type Peers = Arc<DashMap<String, PeerConnection>>;
 fn add_peer_task(peer: Peer, peers: Peers) {
     let (tx, rx) = mpsc::channel::<()>(32);
 
-    let handle = tokio::spawn(connect_peers(peer.clone(), rx));
+    let handle = tokio::spawn(connect_peers(peer.clone(), rx, None));
     let peer_connection = PeerConnection {
         peer,
         handle,
@@ -62,6 +62,7 @@ pub async fn demo(client: SocketAddr, server: SocketAddr, peers: Peers) {
                     address,
                     peer_type,
                 } => {
+                    println!("Peer {} at {} wants to connect", name, address);
                     let peer = Peer {
                         name: name.clone(),
                         address: address.parse().expect("Peer address invalid"),
@@ -98,27 +99,26 @@ pub async fn connect(socket: UdpSocket, server: SocketAddr, peers: Peers) -> Res
     loop {
         let (n, peer_address) = socket.recv_from(&mut buffer).await.unwrap();
         let message =
-            deserialize::<MessagesFromServer>(&buffer[..n]).expect("Failed to deserialize message");
+            deserialize::<PeerMessage>(&buffer[..n]).expect("Failed to deserialize message");
 
         match message {
-            MessagesFromServer::Confirm { name, address } => {
-                println!("Received confirmation from {} at {}", name, address);
+            PeerMessage::Discover { name } => {
+                println!("Received confirmation from {} at {}", name, peer_address);
                 let peer = Peer {
                     name: name.clone(),
-                    address: address.parse().expect("Peer address invalid"),
+                    address: peer_address,
                     peer_type: peer_type.clone(),
                 };
                 add_peer_task(peer, peers);
                 return Ok(());
             }
-            MessagesFromServer::Reject { name } => {
-                println!("Connection request rejected by {}", name);
-                return Err(());
-            }
             _ => {
                 let received_data = &buffer[..n];
                 let message = String::from_utf8_lossy(received_data);
-                println!("Received UDP packet from {}: {}", peer_address, message);
+                println!(
+                    "Received UDP packet from peer {}: {}",
+                    peer_address, message
+                );
             }
         }
     }
@@ -137,53 +137,69 @@ pub async fn serve(listener: SocketAddr) {
         loop {
             let (n, peer_address) = socket.recv_from(&mut buffer).await.unwrap();
 
+            let message = String::from_utf8_lossy(&buffer[..n]);
+            println!("Received UDP packet from {}: {}", peer_address, message);
+
             let message = bincode::deserialize::<ServerMessage>(&buffer[..n])
                 .expect("Failed to deserialize message");
 
-            let response = match message {
+            match message {
                 ServerMessage::Register { name } => {
                     let address = peer_address.to_string();
                     waiting.insert(name.clone(), address);
-                    serialize(&MessagesFromServer::RegisterConfirmation { name })
-                        .expect("Failed to serialize message")
+                    let response = serialize(&MessagesFromServer::RegisterConfirmation { name })
+                        .expect("Failed to serialize message");
+                    socket.send_to(&response, &peer_address).await.unwrap();
                 }
-                ServerMessage::Ping { name } => serialize(&MessagesFromServer::Pong { name })
-                    .expect("Failed to serialize message"),
+                ServerMessage::Ping { name } => {
+                    let response = serialize(&MessagesFromServer::Pong { name })
+                        .expect("Failed to serialize message");
+                    socket
+                        .send_to(&response, &peer_address)
+                        .await
+                        .expect("Failed to send UDP packet");
+                }
                 ServerMessage::ConnectionRequest {
                     from,
                     to,
                     peer_type,
-                } => match waiting.get(&to) {
-                    Some(peer_address) => {
-                        let peer_address: SocketAddr =
-                            peer_address.parse().expect("Peer address invalid");
+                } => {
+                    let control_message = match waiting.get(&to) {
+                        Some(target_address) => {
+                            let target_address: SocketAddr =
+                                target_address.parse().expect("Peer address invalid");
 
-                        let request = serialize(&MessagesFromServer::ConnectionRequest {
-                            name: from.clone(),
-                            address: peer_address.to_string(),
-                            peer_type,
-                        })
-                        .expect("Failed to serialize message");
+                            let request = serialize(&MessagesFromServer::ConnectionRequest {
+                                name: from.clone(),
+                                address: peer_address.to_string(),
+                                peer_type,
+                            })
+                            .expect("Failed to serialize message");
+                            socket
+                                .send_to(&request, &target_address)
+                                .await
+                                .expect("Failed to send UDP packet");
+
+                            println!("Sent connection request to {}", to);
+
+                            serialize(&MessagesFromServer::Confirm {
+                                name: from.clone(),
+                                address: target_address.to_string(),
+                            })
+                            .expect("Failed to serialize message")
+                        }
+                        None => serialize(&MessagesFromServer::Reject { name: from.clone() })
+                            .expect("Failed to serialize message"),
+                    };
+
+                    if let Some(from_control_address) = waiting.get(&from) {
                         socket
-                            .send_to(&request, &peer_address)
+                            .send_to(&control_message, &from_control_address)
                             .await
                             .expect("Failed to send UDP packet");
-
-                        serialize(&MessagesFromServer::Confirm {
-                            name: from.clone(),
-                            address: peer_address.to_string(),
-                        })
-                        .expect("Failed to serialize message")
-                    }
-                    None => serialize(&MessagesFromServer::Reject { name: from })
-                        .expect("Failed to serialize message"),
-                },
+                    };
+                }
             };
-
-            let message = String::from_utf8_lossy(&buffer[..n]);
-            println!("Received UDP packet from {}: {}", peer_address, message);
-            socket.send_to(&response, &peer_address).await.unwrap();
-            sleep(Duration::from_millis(500)).await;
         }
     });
 

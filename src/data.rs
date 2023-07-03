@@ -41,6 +41,7 @@ pub enum MessagesFromServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PeerMessage {
+    Discover { name: String },
     Ping,
     Pong,
     Init,

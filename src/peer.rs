@@ -4,18 +4,25 @@ use tokio::{net::UdpSocket, sync::mpsc::Receiver};
 
 use crate::{data::Peer, PeerMessage};
 
-pub async fn connect_peers(peer: Peer, mut rx: Receiver<()>) {
+pub async fn connect_peers(peer: Peer, mut rx: Receiver<()>, punched: Option<UdpSocket>) {
     println!("Connecting to peer {}", peer.name);
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
     let client_address: SocketAddr = "0.0.0.0:0".parse().expect("Local address invalid"); // Let the OS assign a random available port for the client
-    let socket = UdpSocket::bind(&client_address)
-        .await
-        .expect("Failed to bind UDP socket");
+    let socket = if let Some(s) = punched {
+        s
+    } else {
+        UdpSocket::bind(&client_address)
+            .await
+            .expect("Failed to bind UDP socket")
+    };
 
     let mut buffer = [0u8; 1024];
 
-    let message = serialize(&PeerMessage::Init).expect("Failed to serialize message");
+    let message = serialize(&PeerMessage::Discover {
+        name: "Hans".to_string(),
+    })
+    .expect("Failed to serialize message");
     socket
         .send_to(&message, &peer.address)
         .await
