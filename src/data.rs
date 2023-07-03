@@ -32,6 +32,7 @@ pub enum MessagesFromServer {
     },
     Confirm {
         name: String,
+        address: String,
     },
     Reject {
         name: String,
