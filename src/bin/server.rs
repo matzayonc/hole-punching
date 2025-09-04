@@ -1,7 +1,7 @@
 use clap::Parser;
-use log::info;
 use std::net::{SocketAddr, ToSocketAddrs};
 use tokio_websockets::Error;
+use tracing::info;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -13,7 +13,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
 
     let args = Args::parse();
 

@@ -3,6 +3,8 @@ use tokio::{sync::mpsc::Sender, task::JoinHandle};
 
 use crate::peer::Peer;
 
+pub const ENCODING: bincode::config::Configuration = bincode::config::standard();
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
     Register { name: String },

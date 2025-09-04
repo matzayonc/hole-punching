@@ -1,9 +1,9 @@
-use crate::PeerMessage;
-use bincode::{deserialize, serialize};
-use log::{debug, info};
+use crate::{PeerMessage, ENCODING};
+use bincode::serde::{decode_from_slice, encode_to_vec};
 use std::net::SocketAddr;
 use tokio::time::{Duration, Interval};
 use tokio::{net::UdpSocket, sync::mpsc::Receiver};
+use tracing::{debug, info, span, Level};
 
 #[derive(Debug, Clone)]
 pub struct Peer {
@@ -20,7 +20,7 @@ pub struct PeerNode {
 
 impl PeerNode {
     pub async fn new(own_name: String, peer: Peer, punched: Option<UdpSocket>) -> PeerNode {
-        info!("Connecting to peer {}", peer.name);
+        info!(peer = %peer.name, "Connecting to peer");
         let interval = if punched.is_some() { 5 } else { 7 };
         let interval = tokio::time::interval(Duration::from_secs(interval));
 
@@ -47,10 +47,13 @@ impl PeerNode {
             .await
             .expect("Failed to bind UDP socket");
 
-        let message = serialize(&PeerMessage::Introduce {
-            source: own_name,
-            expected: peer.name,
-        })
+        let message = encode_to_vec(
+            &PeerMessage::Introduce {
+                source: own_name,
+                expected: peer.name,
+            },
+            ENCODING,
+        )
         .expect("Serializing introduce message expected to succeed.");
 
         socket
@@ -64,10 +67,13 @@ impl PeerNode {
     pub async fn listen(mut self, mut rx: Receiver<()>) {
         let mut buffer = [0u8; 1024];
 
-        let message = serialize(&PeerMessage::Introduce {
-            source: self.own_name.clone(),
-            expected: self.peer.name.clone(),
-        })
+        let message = encode_to_vec(
+            &PeerMessage::Introduce {
+                source: self.own_name.clone(),
+                expected: self.peer.name.clone(),
+            },
+            ENCODING,
+        )
         .expect("Failed to serialize message");
         self.socket
             .send_to(&message, &self.peer.address)
@@ -77,8 +83,8 @@ impl PeerNode {
         loop {
             tokio::select! {
                 _ = self.interval.tick() => {
-                    debug!("Sending ping to peer {}", self.peer.name);
-                    let message = serialize(&PeerMessage::Ping).expect("Failed to serialize message");
+                    debug!(peer = %self.peer.name, "Sending ping to peer");
+                    let message = encode_to_vec(&PeerMessage::Ping, ENCODING).expect("Failed to serialize message");
                     self.socket
                     .send_to(&message, &self.peer.address)
                     .await
@@ -86,28 +92,30 @@ impl PeerNode {
                 },
                 v = rx.recv() => {
                     if let Some(_) = v {
-                        info!("Received message from system {}", self.peer.name);
+                        info!(peer = %self.peer.name, "Received message from system");
                     } else {
-                        info!("Connection with peer {} closed by force", self.peer.name);
+                        info!(peer = %self.peer.name, "Connection with peer closed by force");
                     }
-                    println!("Received message from system {}", self.peer.name);
+                    debug!(peer = %self.peer.name, "rx.recv returned");
                 },
                 v = self.socket.recv_from(&mut buffer) => {
                     let (n, peer_address) = v.expect("Failed to receive UDP packet");
 
                     if &peer_address != &self.peer.address {
-                        debug!("Received message from unknown peer {}", peer_address);
+                        debug!(from = %peer_address, "Received message from unknown peer");
                         continue;
                     }
 
-                    let message = if let Ok(message) = deserialize::<PeerMessage>(&buffer[..n]) {
+                    let (message, _) = if let Ok(message) = decode_from_slice(&buffer[..n], ENCODING) {
                         message
                     } else {
                         let message = String::from_utf8_lossy(&buffer[..n]);
-                        debug!("Received invalid message from peer {}: {}", self.peer.name, message);
+                        debug!(peer = %self.peer.name, message = %message, "Received invalid message from peer");
                         continue;
                     };
 
+                    let s = span!(Level::INFO, "process_peer_message", peer = %self.peer.name);
+                    let _ent = s.enter();
                     self.process(message).await;
                 }
             }
@@ -117,22 +125,20 @@ impl PeerNode {
     async fn process(&mut self, message: PeerMessage) {
         match message {
             PeerMessage::Ping => {
-                debug!("Received ping from peer {}", self.peer.name);
-                let response = serialize(&PeerMessage::Pong).expect("Failed to serialize message");
+                debug!(peer = %self.peer.name, "Received ping from peer");
+                let response = encode_to_vec(&PeerMessage::Pong, ENCODING)
+                    .expect("Failed to serialize message");
                 self.socket
                     .send_to(&response, &self.peer.address)
                     .await
                     .expect("Failed to send UDP packet");
             }
             PeerMessage::Pong => {
-                debug!("Received pong from peer {}", self.peer.name);
+                debug!(peer = %self.peer.name, "Received pong from peer");
                 self.interval.reset();
             }
             unexpected_message => {
-                debug!(
-                    "Received invalid message from peer {}: {unexpected_message:?}",
-                    self.peer.name,
-                );
+                debug!(peer = %self.peer.name, message = ?unexpected_message, "Received invalid message from peer");
             }
         }
     }
